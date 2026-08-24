@@ -1,4 +1,5 @@
 const express = require('express');
+const fetch = require('node-fetch');
 const app = express();
 
 app.use(express.json());
@@ -279,7 +280,6 @@ function renderHTML() {
     `;
 }
 
-// লোকাল টেস্টের জন্য এবং ভার্সেলে সঠিকভাবে এক্সপোর্ট করার জন্য
 if (process.env.NODE_ENV !== 'production') {
     app.listen(3000, () => console.log('Server running on port 3000'));
 }
