@@ -146,9 +146,7 @@ async function verifyOtpRequest(otp) {
             sessionData.otpSuccess = `OTP Auto Matched! Success with OTP: <strong>${otp}</strong>`;
             return true;
         }
-    } catch (e) {
-        // Ignore network errors during brute-force
-    }
+    } catch (e) {}
     return false;
 }
 
@@ -180,7 +178,7 @@ function renderHTML() {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>PUCKER - Node.js Vercel OTP</title>
+        <title>PUCKER - Vercel OTP</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     </head>
     <body>
@@ -189,7 +187,7 @@ function renderHTML() {
                 <div class="col-md-6">
                     <div class="card shadow">
                         <div class="card-header bg-dark text-white">
-                            <h4 class="text-center mb-0">PUCKER (Node.js & Vercel)</h4>
+                            <h4 class="text-center mb-0">PUCKER (Vercel Node.js)</h4>
                         </div>
                         <div class="card-body">
                             ${sessionData.otpSuccess ? `
@@ -267,9 +265,7 @@ function renderHTML() {
                         setTimeout(() => { location.reload(); }, 1500);
                         break;
                     }
-                } catch (err) {
-                    console.log("Error in batch check");
-                }
+                } catch (err) {}
             }
 
             if (!found) {
@@ -283,6 +279,7 @@ function renderHTML() {
     `;
 }
 
+// লোকাল টেস্টের জন্য এবং ভার্সেলে সঠিকভাবে এক্সপোর্ট করার জন্য
 if (process.env.NODE_ENV !== 'production') {
     app.listen(3000, () => console.log('Server running on port 3000'));
 }
