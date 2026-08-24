@@ -1,0 +1,13 @@
+{
+  "name": "pucker-node-otp",
+  "version": "1.0.0",
+  "description": "Superfast Auto OTP Checker on Vercel",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-fetch": "^2.7.0"
+  }
+}
